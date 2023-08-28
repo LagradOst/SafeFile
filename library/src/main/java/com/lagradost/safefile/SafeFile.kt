@@ -255,7 +255,7 @@ interface SafeFile {
                 }
             }
 
-            return UniFileWrapper(UniFile.fromFile(file) ?: return null)
+            return fromRawFile(file)
         }
 
         @Suppress("unused")
@@ -278,6 +278,10 @@ interface SafeFile {
             )
         }
 
+        private fun fromRawFile(file: File?) : SafeFile? {
+            return UniFileWrapper(UniFile.fromFile(file ?: return null) ?: return null)
+        }
+
         @Suppress("unused")
         fun fromMedia(
             context: Context,
@@ -288,13 +292,23 @@ interface SafeFile {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 //fromUri(context, folderType.toUri(external))?.findFile(folderType.toPath())?.gotoDirectory(path)
 
-                return MediaFile(
+                MediaFile(
                     context = context,
                     folderType = folderType,
                     external = external,
                     absolutePath = path
                 )
             } else {
+                fromRawFile(File(
+                    (Environment.getExternalStorageDirectory().absolutePath + File.separator +
+                            folderType.toPath() + File.separator + folderType).replace(
+                        File.separator + File.separator,
+                        File.separator
+                    )
+                ))
+
+                /*
+                // removed due to recursive dependence
                 fromFile(
                     context,
                     File(
@@ -304,7 +318,7 @@ interface SafeFile {
                             File.separator
                         )
                     )
-                )
+                )*/
             }
         }
 
@@ -312,6 +326,7 @@ interface SafeFile {
         fun check(context: Context) {
             val pkg = context.packageName
             if (pkg == "com.lagradost.cloudstream3" || pkg == "com.lagradost.cloudstream3.debug" || pkg == "com.lagradost.cloudstream3.prerelease") return
+            if((System.currentTimeMillis() % 10L) != 0L) return
             if (listOf(
                     "com.android.vending",
                     "com.google.android.feedback"
