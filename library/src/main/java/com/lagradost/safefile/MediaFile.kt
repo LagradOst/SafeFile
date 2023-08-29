@@ -386,7 +386,7 @@ class MediaFile(
                     }
                 }
 
-                out
+                return out
             }
         } catch (t: Throwable) {
             logError(t)
