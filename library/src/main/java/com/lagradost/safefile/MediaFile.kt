@@ -30,10 +30,9 @@ fun MediaFileContentType.toPath(): String {
         MediaFileContentType.Downloads -> Environment.DIRECTORY_DOWNLOADS
         MediaFileContentType.Audio -> Environment.DIRECTORY_MUSIC
         MediaFileContentType.Video -> Environment.DIRECTORY_MOVIES
-        MediaFileContentType.Images -> Environment.DIRECTORY_DCIM
+        MediaFileContentType.Images -> Environment.DIRECTORY_PICTURES
     }
 }
-
 
 @Suppress("unused")
 fun MediaFileContentType.defaultPrefix(): String {
@@ -42,8 +41,10 @@ fun MediaFileContentType.defaultPrefix(): String {
 
 @Suppress("unused")
 fun MediaFileContentType.toAbsolutePath(): String {
-    return defaultPrefix() + File.separator +
-            this.toPath()
+    return replaceDuplicateFileSeparators(
+        defaultPrefix() + File.separator +
+                this.toPath()
+    )
 }
 
 @Suppress("unused")
@@ -54,12 +55,32 @@ fun replaceDuplicateFileSeparators(path: String): String {
 @RequiresApi(Build.VERSION_CODES.Q)
 @Suppress("unused")
 fun MediaFileContentType.toUri(external: Boolean): Uri {
-    val volume = if (external) MediaStore.VOLUME_EXTERNAL_PRIMARY else MediaStore.VOLUME_INTERNAL
-    return when (this) {
-        MediaFileContentType.Downloads -> MediaStore.Downloads.getContentUri(volume)
-        MediaFileContentType.Audio -> MediaStore.Audio.Media.getContentUri(volume)
-        MediaFileContentType.Video -> MediaStore.Video.Media.getContentUri(volume)
-        MediaFileContentType.Images -> MediaStore.Images.Media.getContentUri(volume)
+    // https://developer.android.com/training/data-storage/shared/media#add-item
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val volume =
+            if (external) MediaStore.VOLUME_EXTERNAL_PRIMARY else MediaStore.VOLUME_INTERNAL
+        when (this) {
+            MediaFileContentType.Downloads -> MediaStore.Downloads.getContentUri(volume)
+            MediaFileContentType.Audio -> MediaStore.Audio.Media.getContentUri(volume)
+            MediaFileContentType.Video -> MediaStore.Video.Media.getContentUri(volume)
+            MediaFileContentType.Images -> MediaStore.Images.Media.getContentUri(volume)
+        }
+    } else {
+        if (external) {
+            when (this) {
+                MediaFileContentType.Downloads -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                MediaFileContentType.Audio -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                MediaFileContentType.Video -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                MediaFileContentType.Images -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            }
+        } else {
+            when (this) {
+                MediaFileContentType.Downloads -> MediaStore.Downloads.INTERNAL_CONTENT_URI
+                MediaFileContentType.Audio -> MediaStore.Audio.Media.INTERNAL_CONTENT_URI
+                MediaFileContentType.Video -> MediaStore.Video.Media.INTERNAL_CONTENT_URI
+                MediaFileContentType.Images -> MediaStore.Images.Media.INTERNAL_CONTENT_URI
+            }
+        }
     }
 }
 
@@ -119,16 +140,8 @@ class MediaFile(
 
         private fun splitFilenameMime(name: String): Pair<String, String?> {
             val (display, ext) = splitFilenameExt(name)
-            val mimeType = when (ext) {
+            val mimeType = MimeTypes.fromExtToMime(ext)
 
-                // Absolutely ridiculous, if text/vtt is used as mimetype scoped storage prevents
-                // downloading to /Downloads yet it works with null
-
-                "vtt" -> null // "text/vtt"
-                "mp4" -> "video/mp4"
-                "srt" -> null // "application/x-subrip"//"text/plain"
-                else -> null
-            }
             return display to mimeType
         }
     }
@@ -152,6 +165,39 @@ class MediaFile(
         )
     }
 
+    private fun niceMime(mime: String): String {
+        return when (folderType) {
+            // I assert that Downloads can take any type
+            MediaFileContentType.Downloads -> return mime
+            MediaFileContentType.Audio -> "audio/"
+            MediaFileContentType.Video -> "video/"
+            MediaFileContentType.Images -> "image/"
+        } + mime.substringAfter("/")
+    }
+
+    // because android is funky we do this, trying to check if mimetype changes the outcome
+    private fun createUriFromContent(values: ContentValues, mime: String?): Uri? {
+        val mimeTypes =
+            if (mime == null) listOf(null) else listOf(mime, niceMime(mime), null).distinct()
+
+        for (m in mimeTypes) {
+            if (m != null)
+                values.put(MediaStore.MediaColumns.MIME_TYPE, m)
+            else values.remove(MediaStore.MediaColumns.MIME_TYPE)
+
+            try {
+                return contentResolver.insert(baseUri, values) ?: continue
+            } catch (e: IllegalArgumentException) {
+                logError(e)
+                continue
+            } catch (t: Throwable) {
+                logError(t)
+                break
+            }
+        }
+        return null
+    }
+
     private fun createUri(displayName: String? = namePath): Uri? {
         if (displayName == null) return null
         if (isFile) return null
@@ -160,11 +206,17 @@ class MediaFile(
         val newFile = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.TITLE, name)
-            if (mime != null)
-                put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+
+            // this just makes shit disappear and will cause bugs
+            // put(MediaStore.MediaColumns.IS_PENDING, 1)
+
+            // unspecified RELATIVE_PATH places it in the top directory
+            if (relativePath.contains(File.separator)) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath + File.separator)
+            }
         }
-        return contentResolver.insert(baseUri, newFile)
+
+        return createUriFromContent(newFile, mime)
     }
 
     override fun createFile(displayName: String?): SafeFile? {
@@ -267,6 +319,8 @@ class MediaFile(
                     }
             } catch (e: FileNotFoundException) {
                 return null
+            } catch (t: Throwable) {
+                logError(t)
             }
 
             val inputStream: InputStream = openInputStream() ?: return null
@@ -358,20 +412,26 @@ class MediaFile(
     override fun openOutputStream(append: Boolean): OutputStream? {
         try {
             // use current file
-            uri()?.let {
-                return contentResolver.openOutputStream(
-                    it,
+            uri()?.let { uri ->
+                contentResolver.openOutputStream(
+                    uri,
                     if (append) "wa" else "wt"
-                )
+                )?.let { out ->
+                    return out
+                    //return OutputStreamWrapper(out, uri, contentResolver)
+                }
             }
 
             // create a new file if current is not found,
             // as we know it is new only write access is needed
-            createUri()?.let {
-                return contentResolver.openOutputStream(
-                    it,
+            createUri()?.let { uri ->
+                contentResolver.openOutputStream(
+                    uri,
                     "w"
-                )
+                )?.let { out ->
+                    return out
+                    //return OutputStreamWrapper(out, uri, contentResolver)
+                }
             }
             return null
         } catch (t: Throwable) {

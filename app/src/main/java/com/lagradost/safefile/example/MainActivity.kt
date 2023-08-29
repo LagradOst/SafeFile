@@ -29,12 +29,19 @@ class MainActivity : AppCompatActivity() {
 
         // create file in download directory
         val createdExternal = null != SafeFile.fromMedia(context, MediaFileContentType.Downloads)
-            ?.createFile("HelloWorldDownloads.txt")?.openOutputStream(append = false)?.use { out ->
+            ?.gotoDirectory("hello/world/")
+            ?.createFile("hello_world.txt")?.openOutputStream(append = false)?.use { out ->
                 out.bufferedWriter().apply {
                     write("Hello, World! from /Download")
                     flush()
                 }
             }
+
+        val createdFile =
+            SafeFile.fromMedia(context, MediaFileContentType.Downloads)
+                ?.gotoDirectory("hello/world/")
+                ?.findFile("hello_world.txt")
+                ?.openInputStream()?.reader()?.readText()
 
         // list files
         val dir = this.filesDir
@@ -49,6 +56,6 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.hello)?.text =
             "Created Internal: $createdInternal\nCreated External: $createdExternal\nFiles:\n" + files?.joinToString(
                 separator = "\n\n"
-            )
+            ) + "\n\nCreated file: $createdFile"
     }
 }
