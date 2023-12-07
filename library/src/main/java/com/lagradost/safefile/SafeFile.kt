@@ -301,7 +301,7 @@ interface SafeFile {
             } else {
                 fromRawFile(File(
                     (Environment.getExternalStorageDirectory().absolutePath + File.separator +
-                            folderType.toPath() + File.separator + folderType).replace(
+                            folderType.toPath()).replace(
                         File.separator + File.separator,
                         File.separator
                     )
