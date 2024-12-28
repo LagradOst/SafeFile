@@ -1,5 +1,6 @@
 package com.lagradost.safefile
 
+import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
 import java.io.InputStream
@@ -19,6 +20,10 @@ fun <T> safe(apiCall: () -> T): T? {
 }
 
 class UniFileWrapper(private val file: UniFile) : SafeFile {
+    private val context: Context by lazy {
+        SafeFile.getContext()
+    }
+
     override fun createFile(displayName: String?): SafeFile? {
         return file.createFile(displayName)?.toFile()
     }
@@ -79,6 +84,10 @@ class UniFileWrapper(private val file: UniFile) : SafeFile {
 
     override fun canWrite(): Boolean {
         return safe { file.canWrite() } ?: false
+    }
+
+    override fun delete(uri: Uri): Boolean {
+        return safe { context.contentResolver.delete(uri, null, null) > 0 } ?: false
     }
 
     override fun delete(): Boolean {

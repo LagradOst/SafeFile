@@ -343,7 +343,7 @@ class MediaFile(
         return true //TODO("Not yet implemented")
     }
 
-    private fun delete(uri: Uri): Boolean {
+    override fun delete(uri: Uri): Boolean {
         return contentResolver.delete(uri, null, null) > 0
     }
 

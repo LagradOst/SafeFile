@@ -142,6 +142,14 @@ interface SafeFile {
 
     @Throws(IOException::class)
     @Suppress("unused")
+    fun deleteOrThrow(uri: Uri) {
+        if (!delete(uri)) {
+            throw IOException("Unable to delete file")
+        }
+    }
+
+    @Throws(IOException::class)
+    @Suppress("unused")
     fun deleteOrThrow() {
         if (!delete()) {
             throw IOException("Unable to delete file")
@@ -207,7 +215,10 @@ interface SafeFile {
     /** Indicates whether the current context is allowed to write to this file. */
     fun canWrite(): Boolean
 
-    /** Deletes this file/directory. returns true if successful  */
+    /** Deletes this file URI. returns true if successful. */
+    fun delete(uri: Uri): Boolean
+
+    /** Deletes this file/directory. returns true if successful. */
     fun delete(): Boolean
 
     /** Returns a boolean indicating whether this file can be found. returns null if some sort of error happened, can be treated as false */
@@ -230,14 +241,24 @@ interface SafeFile {
     fun openInputStream(): InputStream?
 
     companion object {
+        private var appContext: Context? = null
+
+        fun initialize(context: Context) {
+            if (appContext == null) {
+                appContext = context.applicationContext
+            }
+        }
+
         @Suppress("unused")
         fun fromUri(context: Context, uri: Uri): SafeFile? {
+            initialize(context)
             return UniFileWrapper(UniFile.fromUri(context, uri) ?: return null)
         }
 
         @SuppressWarnings("unused")
         fun fromFile(context: Context, file: File?): SafeFile? {
             if (file == null) return null
+            initialize(context)
             // because UniFile sucks balls on Media we have to do this
             val absPath = file.absolutePath.removePrefix(File.separator)
             for (value in MediaFileContentType.values()) {
@@ -263,6 +284,7 @@ interface SafeFile {
             context: Context,
             filename: String?
         ): SafeFile? {
+            initialize(context)
             return UniFileWrapper(
                 UniFile.fromAsset(context.assets, filename ?: return null) ?: return null
             )
@@ -273,6 +295,7 @@ interface SafeFile {
             context: Context,
             id: Int
         ): SafeFile? {
+            initialize(context)
             return UniFileWrapper(
                 UniFile.fromResource(context, id) ?: return null
             )
@@ -289,6 +312,7 @@ interface SafeFile {
             path: String = File.separator,
             external: Boolean = true,
         ): SafeFile? {
+            initialize(context)
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 //fromUri(context, folderType.toUri(external))?.findFile(folderType.toPath())?.gotoDirectory(path)
 
@@ -320,6 +344,10 @@ interface SafeFile {
                     )
                 )*/
             }
+        }
+
+        internal fun getContext(): Context {
+            return appContext ?: throw IllegalStateException("Context not yet initialized.")
         }
 
         @Suppress("unused")
