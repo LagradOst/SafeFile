@@ -233,23 +233,29 @@ interface SafeFile {
                 File.separator
             } else {
                 ""
-            }
+            }.replace(File.separator + File.separator, File.separator) // just in case
+            return fromFilePath(context, absPath)
+        }
+
+        @Suppress("unused")
+        fun fromFilePath(context: Context, absolutePath: String?): SafeFile? {
+            if (absolutePath == null) return null
             for (value in MediaFileContentType.values()) {
                 val prefixes = listOf(
                     value.toAbsolutePath(),
                     value.toPath()
                 ).map { it.removePrefix(File.separator) }
                 for (prefix in prefixes) {
-                    if (!absPath.startsWith(prefix)) continue
+                    if (!absolutePath.startsWith(prefix)) continue
                     return fromMedia(
                         context = context,
                         folderType = value,
-                        path = absPath.removePrefix(prefix).ifBlank { File.separator }
+                        path = absolutePath.removePrefix(prefix).ifBlank { File.separator }
                     )
                 }
             }
 
-            return fromRawFile(context, file)
+            return fromRawFile(context, File(absolutePath))
         }
 
         @Suppress("unused")
@@ -328,7 +334,7 @@ interface SafeFile {
         fun check(context: Context) {
             val pkg = context.packageName
             if (pkg == "com.lagradost.cloudstream3" || pkg == "com.lagradost.cloudstream3.debug" || pkg == "com.lagradost.cloudstream3.prerelease") return
-            if((System.currentTimeMillis() % 10L) != 0L) return
+            if ((System.currentTimeMillis() % 10L) != 0L) return
             if (listOf(
                     "com.android.vending",
                     "com.google.android.feedback"
