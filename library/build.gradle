@@ -1,14 +1,16 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 apply plugin: 'maven-publish'
 
 android {
-    compileSdkVersion 33
-    buildToolsVersion "30.0.3"
+    compileSdk 33
 
     defaultConfig {
-        minSdkVersion 21
-        targetSdkVersion 33
+        minSdk 21
+        targetSdk 33
     }
 
     buildTypes {
@@ -17,7 +19,15 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    namespace 'com.lagradost.safefile'
 }
+
+tasks.withType(KotlinJvmCompile.class).configureEach {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_1_8)
+    }
+}
+
 repositories {
     maven { url "https://jitpack.io" }
 }
@@ -41,6 +51,6 @@ publishing {
 
 dependencies {
 
-    implementation("com.github.tachiyomiorg:unifile:17bec43")
-    implementation("androidx.annotation:annotation-jvm:1.6.0")
+    implementation("com.github.tachiyomiorg:unifile:a9de196cc7ec623d5641fbe0f768c082736ac84c")
+    implementation("androidx.annotation:annotation-jvm:1.9.1")
 }

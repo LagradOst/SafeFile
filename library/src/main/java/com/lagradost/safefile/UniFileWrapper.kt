@@ -1,12 +1,17 @@
 package com.lagradost.safefile
 
+import android.content.ContentResolver
+import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import kotlin.jvm.Throws
 
-private fun UniFile.toFile(): SafeFile {
-    return UniFileWrapper(this)
+private fun UniFile.toFile(context: Context): SafeFile {
+    return UniFileWrapper(context, this)
 }
 
 fun <T> safe(apiCall: () -> T): T? {
@@ -18,50 +23,67 @@ fun <T> safe(apiCall: () -> T): T? {
     }
 }
 
-class UniFileWrapper(private val file: UniFile) : SafeFile {
-    override fun createFile(displayName: String?): SafeFile? {
-        return file.createFile(displayName)?.toFile()
+class UniFileWrapper(
+    private val context: Context, private val file: UniFile
+) : SafeFile {
+    private val contentResolver: ContentResolver = context.contentResolver
+
+    @Throws
+    override fun createFileOrThrow(displayName: String?): SafeFile {
+        return (file.createFile(displayName) ?: throw IOException("Unable to create file")).toFile(
+            context
+        )
     }
 
-    override fun createDirectory(directoryName: String?): SafeFile? {
-        return file.createDirectory(directoryName)?.toFile()
+    @Throws
+    override fun createDirectoryOrThrow(directoryName: String?): SafeFile {
+        return (file.createDirectory(directoryName)
+            ?: throw IOException("Unable to create directory")).toFile(context)
     }
 
-    override fun uri(): Uri? {
-        return safe { file.uri }
+    @Throws
+    override fun uriOrThrow(): Uri {
+        return file.uri
     }
 
-    override fun name(): String? {
-        return safe { file.name }
+    @Throws
+    override fun nameOrThrow(): String {
+        return file.name ?: throw IOException("Null name")
     }
 
-    override fun type(): String? {
-        return safe { file.type }
+    @Throws
+    override fun typeOrThrow(): String {
+        return file.type ?: throw IOException("Null type")
     }
 
-    override fun filePath(): String? {
-        return safe { file.filePath }
+    @Throws
+    override fun filePathOrThrow(): String {
+        return file.filePath ?: throw IOException("Null filepath")
     }
 
-    override fun isDirectory(): Boolean? {
-        return safe { file.isDirectory }
+    @Throws
+    override fun isDirectoryOrThrow(): Boolean {
+        return file.isDirectory
     }
 
-    override fun isFile(): Boolean? {
-        return safe { file.isFile }
+    @Throws
+    override fun isFileOrThrow(): Boolean {
+        return file.isFile
     }
 
-    override fun lastModified(): Long? {
-        return safe { file.lastModified() }
+    @Throws
+    override fun lastModifiedOrThrow(): Long {
+        return file.lastModified()
     }
 
-    override fun length(): Long? {
-        return safe {
+    @Throws
+    override fun lengthOrThrow(): Long {
+        try {
             val len = file.length()
-            if(len == -1L) return@safe null
+            if (len == -1L) throw IOException("-1 Length")
 
-            if (len <= 1) {
-                val inputStream = this.openInputStream() ?: return@safe null
+            return if (len <= 1) {
+                val inputStream = this.openInputStreamOrThrow()
                 try {
                     inputStream.available().toLong()
                 } finally {
@@ -70,43 +92,90 @@ class UniFileWrapper(private val file: UniFile) : SafeFile {
             } else {
                 len
             }
+        } catch (t: Throwable) {
+            // extra check with uri
+            return safe {
+                contentResolver.openFileDescriptor(uriOrThrow(), "r")
+                    .use {
+                        it?.statSize
+                    }
+            } ?: throw t
         }
     }
 
-    override fun canRead(): Boolean {
-        return safe { file.canRead() } ?: false
+    @Throws
+    override fun canReadOrThrow(): Boolean {
+        return file.canRead()
     }
 
-    override fun canWrite(): Boolean {
-        return safe { file.canWrite() } ?: false
+    @Throws
+    override fun canWriteOrThrow(): Boolean {
+        return file.canWrite()
     }
 
-    override fun delete(): Boolean {
-        return safe { file.delete() } ?: false
+    @Throws
+    override fun deleteOrThrow(): Boolean {
+        try {
+            return file.delete()
+        } catch (t: Throwable) {
+            // extra check if we can do it with the uri instead
+            uri()?.let { uri ->
+                return contentResolver.delete(uri, null, null) > 0
+            }
+
+            throw t
+        }
     }
 
-    override fun exists(): Boolean? {
-        return safe { file.exists() }
+    @Throws
+    override fun existsOrThrow(): Boolean {
+        return file.exists()
     }
 
-    override fun listFiles(): List<SafeFile>? {
-        return safe { file.listFiles()?.mapNotNull { it?.toFile() } }
+    @Throws
+    override fun listFilesOrThrow(): List<SafeFile> {
+        return file.listFiles()?.mapNotNull { it?.toFile(context) } ?: throw FileNotFoundException()
     }
 
-    override fun findFile(displayName: String?, ignoreCase: Boolean): SafeFile? {
-        return safe { file.findFile(displayName, ignoreCase)?.toFile() }
+    @Throws
+    override fun findFileOrThrow(displayName: String?, ignoreCase: Boolean): SafeFile {
+        return (file.findFile(displayName) ?: throw FileNotFoundException()).toFile(context)
     }
 
-    override fun renameTo(name: String?): Boolean {
-        return safe { file.renameTo(name) } ?: return false
+    @Throws
+    override fun renameToOrThrow(name: String?): Boolean {
+        return file.renameTo(name)
     }
 
-    override fun openOutputStream(append: Boolean): OutputStream? {
-        return safe { file.openOutputStream(append) }
+    @Throws
+    override fun openOutputStreamOrThrow(append: Boolean): OutputStream {
+        try {
+            return file.openOutputStream(append)
+        } catch (t: Throwable) {
+            // extra check if we can use uri instead
+            uri()?.let { uri ->
+                try {
+                    contentResolver.openOutputStream(
+                        uri,
+                        if (append) "wa" else "wt"
+                    )?.let { out ->
+                        return out
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            throw t
+        }
     }
 
-    override fun openInputStream(): InputStream? {
-        return safe { file.openInputStream() }
+    @Throws
+    override fun openInputStreamOrThrow(): InputStream {
+        return try {
+            file.openInputStream()
+        } catch (t: Throwable) {
+            // extra check if we can use the uri instead
+            safe { contentResolver.openInputStream(uriOrThrow()) } ?: throw t
+        }
     }
 
     //override fun createRandomAccessFile(mode: String?): UniRandomAccessFile? {

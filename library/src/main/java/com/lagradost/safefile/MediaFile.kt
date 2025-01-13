@@ -11,8 +11,10 @@ import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import kotlin.jvm.Throws
 
 
 enum class MediaFileContentType {
@@ -146,8 +148,9 @@ class MediaFile(
         }
     }
 
-    private fun appendRelativePath(path: String, folder: Boolean): MediaFile? {
-        if (isFile) return null
+    @Throws
+    private fun appendRelativePathOrThrow(path: String, folder: Boolean): MediaFile {
+        require(isDir) { "Requires this to be a directory to appendRelativePath" }
 
         // VideoDownloadManager.sanitizeFilename(path.replace(File.separator, ""))
 
@@ -176,7 +179,8 @@ class MediaFile(
     }
 
     // because android is funky we do this, trying to check if mimetype changes the outcome
-    private fun createUriFromContent(values: ContentValues, mime: String?): Uri? {
+    @Throws
+    private fun createUriFromContent(values: ContentValues, mime: String?): Uri {
         val mimeTypes =
             if (mime == null) listOf(null) else listOf(mime, niceMime(mime), null).distinct()
 
@@ -190,17 +194,15 @@ class MediaFile(
             } catch (e: IllegalArgumentException) {
                 logError(e)
                 continue
-            } catch (t: Throwable) {
-                logError(t)
-                break
             }
         }
-        return null
+        throw IOException("Illegal mime type")
     }
 
-    private fun createUri(displayName: String? = namePath): Uri? {
-        if (displayName == null) return null
-        if (isFile) return null
+    @Throws
+    private fun createUriOrThrow(displayName: String? = namePath): Uri {
+        require(displayName != null) { "Requires non null display name" }
+        require(isDir) { "Requires this to be a directory to create sub files" }
         val (name, mime) = splitFilenameMime(displayName)
 
         val newFile = ContentValues().apply {
@@ -219,16 +221,23 @@ class MediaFile(
         return createUriFromContent(newFile, mime)
     }
 
-    override fun createFile(displayName: String?): SafeFile? {
-        if (isFile || displayName == null) return null
-        query(displayName)?.uri ?: createUri(displayName) ?: return null
-        return appendRelativePath(displayName, false) //SafeFile.fromUri(context,  ?: return null)
+    @Throws
+    override fun createFileOrThrow(displayName: String?): SafeFile {
+        require(isDir) { "Requires a directory to createFile" }
+        require(displayName != null) { "Requires non null name" }
+
+        safe { query(displayName).uri } ?: createUriOrThrow(displayName)
+        return appendRelativePathOrThrow(
+            displayName,
+            false
+        ) //SafeFile.fromUri(context,  ?: return null)
     }
 
-    override fun createDirectory(directoryName: String?): SafeFile? {
-        if (directoryName == null) return null
+    @Throws
+    override fun createDirectoryOrThrow(directoryName: String?): SafeFile {
+        require(directoryName != null) { "Non null directory" }
         // we don't create a dir here tbh, just fake create it
-        return appendRelativePath(directoryName, true)
+        return appendRelativePathOrThrow(directoryName, true)
     }
 
     private data class QueryResult(
@@ -238,77 +247,78 @@ class MediaFile(
     )
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun query(displayName: String = namePath): QueryResult? {
-        try {
-            //val (name, mime) = splitFilenameMime(fullName)
+    @Throws
+    private fun query(displayName: String = namePath): QueryResult {
+        //val (name, mime) = splitFilenameMime(fullName)
 
-            val projection = arrayOf(
-                MediaStore.MediaColumns._ID,
-                MediaStore.MediaColumns.DATE_MODIFIED,
-                MediaStore.MediaColumns.SIZE,
-            )
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.SIZE,
+        )
 
-            val selection =
-                "${MediaStore.MediaColumns.RELATIVE_PATH}='$relativePath${File.separator}' AND ${MediaStore.MediaColumns.DISPLAY_NAME}='$displayName'"
+        val selection =
+            "${MediaStore.MediaColumns.RELATIVE_PATH}='$relativePath${File.separator}' AND ${MediaStore.MediaColumns.DISPLAY_NAME}='$displayName'"
 
-            contentResolver.query(
-                baseUri,
-                projection, selection, null, null
-            )?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    val id =
-                        cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+        contentResolver.query(
+            baseUri,
+            projection, selection, null, null
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val id =
+                    cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
 
-                    return QueryResult(
-                        uri = ContentUris.withAppendedId(
-                            baseUri, id
-                        ),
-                        lastModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)),
-                        length = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)),
-                    )
-                }
+                return QueryResult(
+                    uri = ContentUris.withAppendedId(
+                        baseUri, id
+                    ),
+                    lastModified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)),
+                    length = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)),
+                )
             }
-        } catch (t: Throwable) {
-            logError(t)
         }
-
-        return null
+        throw IOException("ContentResolver Query not found")
     }
 
-    override fun uri(): Uri? {
-        return query()?.uri
+    @Throws
+    override fun uriOrThrow(): Uri {
+        return query().uri
     }
 
-    override fun name(): String? {
-        if (isDir) return null
+    @Throws
+    override fun nameOrThrow(): String {
+        require(isFile) { "Cant get name of a directory" }
         return namePath
     }
 
-    override fun type(): String? {
-        return null //TODO("Not yet implemented")
+    @Throws
+    override fun typeOrThrow(): String {
+        throw NotImplementedError()
     }
 
-    override fun filePath(): String {
+    override fun filePathOrThrow(): String {
         return replaceDuplicateFileSeparators(relativePath + File.separator + namePath)
     }
 
-    override fun isDirectory(): Boolean {
+    override fun isDirectoryOrThrow(): Boolean {
         return isDir
     }
 
-    override fun isFile(): Boolean {
+    override fun isFileOrThrow(): Boolean {
         return isFile
     }
 
-    override fun lastModified(): Long? {
-        if (isDir) return null
-        return query()?.lastModified
+    @Throws
+    override fun lastModifiedOrThrow(): Long {
+        require(isFile) { "Cant get modified on a directory" }
+        return query().lastModified
     }
 
-    override fun length(): Long? {
-        if (isDir) return null
+    @Throws
+    override fun lengthOrThrow(): Long {
+        require(isFile) { "Cant get length on a directory" }
         val query = query()
-        val length = query?.length ?: return null
+        val length = query.length
         if (length <= 0) {
             try {
                 contentResolver.openFileDescriptor(query.uri, "r")
@@ -318,16 +328,14 @@ class MediaFile(
                         return it
                     }
             } catch (e: FileNotFoundException) {
-                return null
+                throw e
             } catch (t: Throwable) {
                 logError(t)
             }
 
-            val inputStream: InputStream = openInputStream() ?: return null
+            val inputStream: InputStream = openInputStreamOrThrow()
             return try {
                 inputStream.available().toLong()
-            } catch (t: Throwable) {
-                null
             } finally {
                 inputStream.closeQuietly()
             }
@@ -335,84 +343,95 @@ class MediaFile(
         return length
     }
 
-    override fun canRead(): Boolean {
-        return true //TODO("Not yet implemented")
+    @Throws
+    override fun canReadOrThrow(): Boolean {
+        throw NotImplementedError()
     }
 
-    override fun canWrite(): Boolean {
-        return true //TODO("Not yet implemented")
+    @Throws
+    override fun canWriteOrThrow(): Boolean {
+        throw NotImplementedError()
     }
 
+    @Throws
     private fun delete(uri: Uri): Boolean {
         return contentResolver.delete(uri, null, null) > 0
     }
 
-    override fun delete(): Boolean {
+    @Throws
+    override fun deleteOrThrow(): Boolean {
         return if (isDir) {
-            (listFiles() ?: return false).all {
-                it.delete()
+            (listFilesOrThrow()).all {
+                it.deleteOrThrow()
             }
         } else {
-            delete(uri() ?: return false)
+            delete(uriOrThrow())
         }
     }
 
-    override fun exists(): Boolean {
+    override fun existsOrThrow(): Boolean {
         if (isDir) return true
-        return query() != null
-    }
-
-    override fun listFiles(): List<SafeFile>? {
-        if (isFile) return null
         try {
-            val projection = arrayOf(
-                MediaStore.MediaColumns.DISPLAY_NAME
-            )
-
-            val selection =
-                "${MediaStore.MediaColumns.RELATIVE_PATH}='$relativePath${File.separator}'"
-            contentResolver.query(
-                baseUri,
-                projection, selection, null, null
-            )?.use { cursor ->
-                val out = ArrayList<SafeFile>(cursor.count)
-                while (cursor.moveToNext()) {
-                    val nameIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                    if (nameIdx == -1) continue
-                    val name = cursor.getString(nameIdx)
-
-                    appendRelativePath(name, false)?.let { new ->
-                        out.add(new)
-                    }
-                }
-
-                return out
-            }
+            query() // will throw if does not exists
+            return true
         } catch (t: Throwable) {
-            logError(t)
+            return false
         }
-        return null
     }
 
-    override fun findFile(displayName: String?, ignoreCase: Boolean): SafeFile? {
-        if (isFile || displayName == null) return null
+    @Throws
+    override fun listFilesOrThrow(): List<SafeFile> {
+        require(isDir) { "Cant list files on a file" }
 
-        val new = appendRelativePath(displayName, false) ?: return null
-        if (new.exists()) {
+        val projection = arrayOf(
+            MediaStore.MediaColumns.DISPLAY_NAME
+        )
+
+        val selection =
+            "${MediaStore.MediaColumns.RELATIVE_PATH}='$relativePath${File.separator}'"
+
+        contentResolver.query(
+            baseUri,
+            projection, selection, null, null
+        )?.use { cursor ->
+            val out = ArrayList<SafeFile>(cursor.count)
+            while (cursor.moveToNext()) {
+                val nameIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                if (nameIdx == -1) continue
+                val name = cursor.getString(nameIdx)
+
+                appendRelativePathOrThrow(name, false).let { new ->
+                    out.add(new)
+                }
+            }
+
+            return out
+        } ?: throw IOException("Null contentResolver.query")
+    }
+
+    @Throws
+    override fun findFileOrThrow(displayName: String?, ignoreCase: Boolean): SafeFile {
+        require(isDir) { "Cant find a file is the current is not a directory" }
+        require(displayName != null) { "Non null displayName " }
+
+        val new = appendRelativePathOrThrow(displayName, false)
+        if (new.existsOrThrow()) {
             return new
         }
 
-        return null//SafeFile.fromUri(context, query(displayName ?: return null)?.uri ?: return null)
+        throw FileNotFoundException("No file found")//SafeFile.fromUri(context, query(displayName ?: return null)?.uri ?: return null)
     }
 
-    override fun renameTo(name: String?): Boolean {
-        TODO("Not yet implemented")
+    @Throws
+    override fun renameToOrThrow(name: String?): Boolean {
+        throw NotImplementedError()
     }
 
-    override fun openOutputStream(append: Boolean): OutputStream? {
-        try {
-            // use current file
-            uri()?.let { uri ->
+    @Throws
+    override fun openOutputStreamOrThrow(append: Boolean): OutputStream {
+        // use current file
+        uri()?.let { uri ->
+            try {
                 contentResolver.openOutputStream(
                     uri,
                     if (append) "wa" else "wt"
@@ -420,30 +439,25 @@ class MediaFile(
                     return out
                     //return OutputStreamWrapper(out, uri, contentResolver)
                 }
+            } catch (_: Throwable) {
             }
-
-            // create a new file if current is not found,
-            // as we know it is new only write access is needed
-            createUri()?.let { uri ->
-                contentResolver.openOutputStream(
-                    uri,
-                    "w"
-                )?.let { out ->
-                    return out
-                    //return OutputStreamWrapper(out, uri, contentResolver)
-                }
-            }
-            return null
-        } catch (t: Throwable) {
-            return null
         }
+
+        // create a new file if current is not found,
+        // as we know it is new only write access is needed
+        val uri = createUriOrThrow()
+        contentResolver.openOutputStream(
+            uri,
+            "w"
+        )?.let { out ->
+            return out
+            //return OutputStreamWrapper(out, uri, contentResolver)
+        } ?: throw IOException("Null InputStream")
     }
 
-    override fun openInputStream(): InputStream? {
-        try {
-            return contentResolver.openInputStream(uri() ?: return null)
-        } catch (t: Throwable) {
-            return null
-        }
+    @Throws
+    override fun openInputStreamOrThrow(): InputStream {
+        return contentResolver.openInputStream(uriOrThrow())
+            ?: throw IOException("Null InputStream")
     }
 }
