@@ -40,7 +40,7 @@ publishing {
         maven(MavenPublication) {
             groupId 'com.lagradost'
             artifactId 'safefile'
-            version '0.0.5'
+            version '0.0.8'
 
             afterEvaluate {
                 from components.release
